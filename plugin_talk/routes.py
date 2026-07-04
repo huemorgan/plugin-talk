@@ -121,8 +121,12 @@ def register_routes(app, ctx):
             return bridge.normalize_reply(result)
 
         if body.get("stream", True):
+            last_user = next(
+                (bridge._text(m) for m in reversed(messages) if isinstance(m, dict) and m.get("role") == "user"),
+                "",
+            )
             return StreamingResponse(
-                bridge.stream_turn(run),
+                bridge.stream_turn(run, buffer_words=bridge.pick_buffer_words(last_user)),
                 media_type="text/event-stream",
                 headers=_NO_CACHE,
             )

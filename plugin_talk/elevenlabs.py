@@ -74,25 +74,56 @@ class ElevenLabsClient:
 
     # ------------------------------------------------------- agent provisioning
 
+    async def _ensure_secret(self, value: str) -> str:
+        """A workspace secret holding the bridge token; returns its secret_id.
+
+        ElevenLabs STRIPS a plain Authorization entry from custom request_headers
+        (verified live: every call arrived as 401), so the token must be a
+        workspace secret referenced as ``custom_llm.api_key`` — ElevenLabs then
+        sends ``Authorization: Bearer <secret>`` itself. Secret values can't be
+        read back, so the name embeds a hash of the value: same secret → reuse,
+        rotated secret → new name.
+        """
+        import hashlib
+
+        name = f"luna-talk-bridge-{hashlib.sha256(value.encode()).hexdigest()[:10]}"
+        try:
+            data = await self._get("/v1/convai/secrets")
+            for s in data.get("secrets", []):
+                if s.get("name") == name and s.get("secret_id"):
+                    return s["secret_id"]
+        except ElevenLabsError:
+            pass
+        data = await self._req(
+            "POST", "/v1/convai/secrets", json={"type": "new", "name": name, "value": value}
+        )
+        secret_id = data.get("secret_id")
+        if not secret_id:
+            raise ElevenLabsError("secret create returned no secret_id")
+        return secret_id
+
     @staticmethod
-    def _agent_config(custom_llm_url: str, bridge_secret: str) -> dict[str, Any]:
+    def _agent_config(custom_llm_url: str, secret_id: str) -> dict[str, Any]:
         # api_type "chat_completions": ElevenLabs appends /chat/completions to
         # the url, so we hand it the bridge base ending at .../v1 (verified
         # live against the API, 2026-07).
         return {
             "agent": {
-                "first_message": "Hi, I'm Luna. What can I do for you?",
+                # Neutral: the agent's real name/personality lives in the
+                # connected brain, which may not be called "Luna" at all.
+                "first_message": "Hey, I'm listening — what can I do for you?",
                 "prompt": {
                     "prompt": (
-                        "You are Luna. Every reply is produced by the connected "
-                        "custom LLM (Luna's own agent loop); pass conversation "
-                        "through faithfully."
+                        "Every reply is produced by the connected custom LLM "
+                        "(the agent's own loop, with its real name and "
+                        "personality); pass conversation through faithfully."
                     ),
                     "llm": "custom-llm",
                     "custom_llm": {
                         "url": custom_llm_url,
                         "model_id": "luna",
-                        "request_headers": {"Authorization": f"Bearer {bridge_secret}"},
+                        "api_key": {"secret_id": secret_id},
+                        "request_headers": {},
                     },
                 },
             },
@@ -106,10 +137,11 @@ class ElevenLabsClient:
         return None
 
     async def create_agent(self, name: str, *, custom_llm_url: str, bridge_secret: str) -> str:
+        secret_id = await self._ensure_secret(bridge_secret)
         data = await self._req(
             "POST",
             "/v1/convai/agents/create",
-            json={"name": name, "conversation_config": self._agent_config(custom_llm_url, bridge_secret)},
+            json={"name": name, "conversation_config": self._agent_config(custom_llm_url, secret_id)},
         )
         agent_id = data.get("agent_id")
         if not agent_id:
@@ -118,10 +150,11 @@ class ElevenLabsClient:
 
     async def update_agent_bridge(self, agent_id: str, *, custom_llm_url: str, bridge_secret: str) -> None:
         """Re-point an existing agent at the (possibly moved) bridge + fresh secret."""
+        secret_id = await self._ensure_secret(bridge_secret)
         await self._req(
             "PATCH",
             f"/v1/convai/agents/{agent_id}",
-            json={"conversation_config": self._agent_config(custom_llm_url, bridge_secret)},
+            json={"conversation_config": self._agent_config(custom_llm_url, secret_id)},
         )
 
     async def get_agent_bridge_url(self, agent_id: str) -> str | None:

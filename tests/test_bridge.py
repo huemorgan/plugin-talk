@@ -84,7 +84,7 @@ def test_stream_turn_buffer_words_first_then_reply_then_done():
     payloads = [json.loads(e[len("data: "):]) for e in events[:-1]]
 
     assert payloads[0]["choices"][0]["delta"].get("role") == "assistant"
-    assert payloads[1]["choices"][0]["delta"]["content"] == bridge.BUFFER_WORDS
+    assert payloads[1]["choices"][0]["delta"]["content"] in bridge._BUFFER_VARIANTS
     assert bridge.BUFFER_WORDS.endswith("... ")  # ElevenLabs buffer-words shape
 
     spoken = "".join(p["choices"][0]["delta"].get("content", "") for p in payloads[1:])

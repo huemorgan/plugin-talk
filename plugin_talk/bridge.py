@@ -22,7 +22,14 @@ from typing import Any
 
 # ElevenLabs buffer-words pattern: ellipsis + trailing space avoids TTS
 # distortion while Luna thinks (docs: eleven-agents custom-llm "Buffer words").
-BUFFER_WORDS = "One moment... "
+# Varied so back-to-back replies don't all open with the same phrase; picked by
+# reply length hash (deterministic — no random in tests).
+BUFFER_WORDS = "Mm... "
+_BUFFER_VARIANTS = ("Mm... ", "Hmm... ", "So... ", "Right... ", "Okay... ")
+
+
+def pick_buffer_words(seed: str) -> str:
+    return _BUFFER_VARIANTS[sum(seed.encode()) % len(_BUFFER_VARIANTS)] if seed else BUFFER_WORDS
 
 # How many trailing conversation messages to forward into the prompt. ElevenLabs
 # resends the full transcript each call; Luna's own memory covers the long tail.

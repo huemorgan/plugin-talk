@@ -273,7 +273,7 @@ def test_bridge_nonstream_returns_luna_reply(client, ctx):
 
 
 def test_bridge_stream_is_sse_with_buffer_words(client, ctx):
-    from plugin_talk.bridge import BUFFER_WORDS
+    from plugin_talk.bridge import _BUFFER_VARIANTS
 
     _connect(client)
     secret = ctx.vault.data[VAULT_BRIDGE_SECRET]
@@ -287,7 +287,7 @@ def test_bridge_stream_is_sse_with_buffer_words(client, ctx):
     events = [line for line in resp.text.split("\n\n") if line.startswith("data: ")]
     assert events[-1] == "data: [DONE]"
     first_content = json.loads(events[1][len("data: "):])
-    assert first_content["choices"][0]["delta"]["content"] == BUFFER_WORDS
+    assert first_content["choices"][0]["delta"]["content"] in _BUFFER_VARIANTS
     assert ctx.agent.reply.split(".")[0] in resp.text
 
 

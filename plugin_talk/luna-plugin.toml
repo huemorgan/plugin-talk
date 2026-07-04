@@ -1,6 +1,6 @@
 name = "plugin-talk"
 shown_name = "Talk"
-version = "0.1.3"
+version = "0.1.4"
 description = "Talk to Luna by voice in the browser — sidebar voice widget, ElevenLabs handles audio, Luna stays the brain."
 entry = "plugin_talk"
 sdk_version = "0"
