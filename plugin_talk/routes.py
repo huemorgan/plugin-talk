@@ -34,7 +34,9 @@ AGENT_NAME = "Luna (plugin-talk)"
 
 
 class _ConnectReq(BaseModel):
-    api_key: str
+    # Optional at the schema level so a blank form yields a friendly 400 string
+    # instead of FastAPI's 422 array (which UIs render as "[object Object]").
+    api_key: str | None = None
     agent_id: str | None = None  # optional override; normally auto-provisioned
 
 
@@ -109,7 +111,13 @@ def register_routes(app, ctx):
         tools = bridge.voice_tool_allowlist(ctx)
 
         async def run() -> str:
-            result = await agent.run_turn(prompt, tools=tools)
+            try:
+                result = await agent.run_turn(prompt, tools=tools)
+            except Exception:
+                # bridge.stream_turn speaks a graceful fallback; make sure the
+                # real cause lands in the server log instead of vanishing.
+                log.exception("plugin-talk: voice turn failed")
+                raise
             return bridge.normalize_reply(result)
 
         if body.get("stream", True):
@@ -133,6 +141,8 @@ def register_routes(app, ctx):
 
     @router.post("/connect")
     async def connect(body: _ConnectReq, request: Request, user=Depends(get_current_user)):
+        if not (body.api_key or "").strip():
+            raise HTTPException(400, "Paste your ElevenLabs API key first")
         probe = ElevenLabsClient(body.api_key.strip())
         try:
             await probe.list_voices()

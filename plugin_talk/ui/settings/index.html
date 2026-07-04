@@ -71,7 +71,11 @@ Just paste your ElevenLabs API key — the Luna voice agent is created and wired
     var resp = await fetch(API + path, opts);
     var body = null;
     try { body = await resp.json(); } catch (e) {}
-    if (!resp.ok) { throw new Error((body && body.detail) || ("HTTP " + resp.status)); }
+    if (!resp.ok) {
+      var detail = body && body.detail;
+      if (detail && typeof detail !== "string") { detail = JSON.stringify(detail); }
+      throw new Error(detail || ("HTTP " + resp.status));
+    }
     return body;
   }
 

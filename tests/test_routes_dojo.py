@@ -278,3 +278,11 @@ def test_bridge_stream_is_sse_with_buffer_words(client, ctx):
     first_content = json.loads(events[1][len("data: "):])
     assert first_content["choices"][0]["delta"]["content"] == BUFFER_WORDS
     assert ctx.agent.reply.split(".")[0] in resp.text
+
+
+def test_connect_blank_key_yields_string_error_not_422(client):
+    """Field-level 422s render as [object Object] in browsers — never emit them."""
+    for body in ({}, {"api_key": ""}, {"api_key": "   "}):
+        resp = client.post("/api/p/plugin-talk/connect", json=body)
+        assert resp.status_code == 400
+        assert isinstance(resp.json()["detail"], str)

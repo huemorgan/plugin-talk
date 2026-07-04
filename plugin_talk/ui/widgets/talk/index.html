@@ -155,7 +155,11 @@
       var resp = await fetch(API + "/session", { method: "GET", credentials: "include" });
       if (!resp.ok) {
         var detail = "Setup needed — see Settings → Talk";
-        try { detail = (await resp.json()).detail || detail; } catch (e) {}
+        try {
+          var d = (await resp.json()).detail;
+          if (d && typeof d !== "string") { d = JSON.stringify(d); }
+          detail = d || detail;
+        } catch (e) {}
         throw new Error(detail);
       }
       var s = await resp.json();

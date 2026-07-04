@@ -26,7 +26,7 @@ class TalkPlugin(LunaPlugin):
         name="plugin-talk",
         shown_name="Talk",
         icon="mic",
-        version="0.1.1",
+        version="0.1.2",
         description=(
             "Talk to Luna by voice in the browser — sidebar voice widget, "
             "ElevenLabs handles audio, Luna stays the brain."
