@@ -13,6 +13,21 @@
 > `custom_llm.url` ending at `/v1` — ElevenLabs appends `/chat/completions` —
 > and `request_headers.Authorization`; schema verified live). Reconnect
 > re-points the existing agent, so no manual dashboard step remains.
+>
+> **0.1.2 amendments (live E2E on a real local Luna + real ElevenLabs):**
+> (1) `[object Object]` errors root-caused: FastAPI 422 validation arrays are the
+> only non-string error detail in the stack, and the trigger was **stale 0.1.0
+> routes serving the 0.1.1 page after a marketplace upgrade without a Luna
+> restart** (0.1.0 required `agent_id`). Plugin upgrades need a restart. Fixes:
+> blank/missing form fields return plain 400 strings, and both UIs stringify
+> structured details. (2) Verified live: key-only connect provisions then reuses
+> the agent, voices list (21), voice persists across restart, session token
+> mints, bridge streams correct SSE. (3) Local Luna dev quirks: `~/.luna/
+> managed_plugins/` (marketplace installs) takes precedence over an in-tree
+> symlink — editing source does NOT affect a running Luna that installed from
+> the marketplace; and the workspace `luna/.env` has empty LLM keys, so
+> headless `run_turn` fails locally (pydantic_ai FallbackModel refuses to even
+> build when any provider in the chain lacks its env key).
 **Tests:** 33 unit/dojo passed + 1 live ElevenLabs smoke test passed · **Published:** seeded into `luna-marketplaces/marketplace-src/plugin_talk` (commit `129755b`), Render deploy triggered
 
 ## What was accomplished
