@@ -1,6 +1,18 @@
 # 001 — plugin-talk MVP — Execution Summary
 
-**Version shipped:** plugin-talk 0.1.0 · **Repo:** https://github.com/huemorgan/plugin-talk (tag `v0.1.0`)
+**Version shipped:** plugin-talk 0.1.1 (0.1.0 + first-use fixes) · **Repo:** https://github.com/huemorgan/plugin-talk (tags `v0.1.0`, `v0.1.1`)
+
+> **0.1.1 amendments (first real-browser use):** (1) Luna cookie auth is
+> READ-ONLY — plugin iframes must send the shell's bearer token (`?token=` query
+> or `luna-auth` postMessage; see plugin-render) for any POST; the settings page
+> now does. (2) Sidebar *widget* iframes get NO token at all (plain `<iframe>` in
+> Shell.tsx) — `/session` accepts GET so the widget can mint with cookie auth.
+> (3) Agent ID field removed: `/connect` takes just the API key and
+> auto-provisions the "Luna (plugin-talk)" agent via the ElevenLabs agents API
+> (`POST /v1/convai/agents/create` with `prompt.llm="custom-llm"` +
+> `custom_llm.url` ending at `/v1` — ElevenLabs appends `/chat/completions` —
+> and `request_headers.Authorization`; schema verified live). Reconnect
+> re-points the existing agent, so no manual dashboard step remains.
 **Tests:** 33 unit/dojo passed + 1 live ElevenLabs smoke test passed · **Published:** seeded into `luna-marketplaces/marketplace-src/plugin_talk` (commit `129755b`), Render deploy triggered
 
 ## What was accomplished
