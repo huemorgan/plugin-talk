@@ -1,6 +1,17 @@
 # 001 — plugin-talk MVP — Execution Summary
 
-**Version shipped:** plugin-talk 0.1.1 (0.1.0 + first-use fixes) · **Repo:** https://github.com/huemorgan/plugin-talk (tags `v0.1.0`, `v0.1.1`)
+**Version shipped:** plugin-talk 0.1.3 · **Repo:** https://github.com/huemorgan/plugin-talk (tags `v0.1.0`–`v0.1.3`)
+
+> **0.1.3 amendments (first real voice session):** (1) ElevenLabs' cloud can't
+> reach a localhost custom-LLM URL — local Lunas need a tunnel (`cloudflared
+> tunnel --url http://localhost:3000`); connect now refuses to clobber a public
+> bridge URL from a localhost origin. (2) Mic permission is requested explicitly
+> on Talk with a clear unblock hint when denied; the user-side waveform runs on
+> our own AnalyserNode (SDK volume getters can be a constant-0 base class).
+> (3) Voice is PATCHed onto the agent (`conversation_config.tts.voice_id`) —
+> per-session overrides require `platform_settings.overrides` permission and
+> fail silently otherwise. (4) `~/.luna/managed_plugins/<pkg>` serves static UI
+> files live (rsync = instant), but Python route changes still need a restart.
 
 > **0.1.1 amendments (first real-browser use):** (1) Luna cookie auth is
 > READ-ONLY — plugin iframes must send the shell's bearer token (`?token=` query
