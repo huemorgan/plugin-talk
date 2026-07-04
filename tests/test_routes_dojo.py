@@ -22,6 +22,8 @@ class FakeEL:
 
     instances: list["FakeEL"] = []
     fail_key_check = False
+    existing_agents: dict[str, str] = {}  # name -> agent_id
+    agent_configs: list[dict] = []        # recorded create/update calls
 
     def __init__(self, api_key: str, **kw):
         self.api_key = api_key
@@ -37,6 +39,22 @@ class FakeEL:
             {"voice_id": "v-rachel", "name": "Rachel", "category": "premade", "preview_url": "https://x/r.mp3"},
             {"voice_id": "v-luna", "name": "Luna", "category": "cloned", "preview_url": None},
         ]
+
+    async def find_agent(self, name: str):
+        return FakeEL.existing_agents.get(name)
+
+    async def create_agent(self, name: str, *, custom_llm_url: str, bridge_secret: str):
+        agent_id = f"agent_auto_{len(FakeEL.existing_agents) + 1}"
+        FakeEL.existing_agents[name] = agent_id
+        FakeEL.agent_configs.append(
+            {"op": "create", "agent_id": agent_id, "url": custom_llm_url, "secret": bridge_secret}
+        )
+        return agent_id
+
+    async def update_agent_bridge(self, agent_id: str, *, custom_llm_url: str, bridge_secret: str):
+        FakeEL.agent_configs.append(
+            {"op": "update", "agent_id": agent_id, "url": custom_llm_url, "secret": bridge_secret}
+        )
 
     async def conversation_token(self, agent_id: str):
         return f"tok-{agent_id}"
@@ -54,13 +72,15 @@ def _patch_elevenlabs(monkeypatch):
 
     FakeEL.instances = []
     FakeEL.fail_key_check = False
+    FakeEL.existing_agents = {}
+    FakeEL.agent_configs = []
     monkeypatch.setattr(routes_module, "ElevenLabsClient", FakeEL)
 
 
-def _connect(client):
+def _connect(client, **extra):
     resp = client.post(
         "/api/p/plugin-talk/connect",
-        json={"api_key": "sk_test_not_real", "agent_id": "agent_123"},
+        json={"api_key": "sk_test_not_real", **extra},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()
@@ -100,6 +120,15 @@ def test_settings_page_is_served(client):
     assert resp.status_code == 200
     assert 'data-testid="talk-voice-select"' in resp.text
     assert 'data-testid="talk-connect"' in resp.text
+    # writes need the shell's bearer token (cookie auth is read-only)
+    assert "luna-auth" in resp.text and "Authorization" in resp.text
+    # agent id is auto-provisioned — no manual field anymore
+    assert 'data-testid="talk-agent-id"' not in resp.text
+
+
+def test_widget_uses_get_for_session(client):
+    html = client.get("/api/p/plugin-talk/ui/widgets/talk/").text
+    assert '"/session", { method: "GET"' in html
 
 
 def test_static_serving_blocks_path_traversal(client):
@@ -111,22 +140,45 @@ def test_static_serving_blocks_path_traversal(client):
 # --------------------------------------------------- 2. things are configurable
 
 
-def test_connect_stores_keys_in_vault_and_mints_bridge_secret(client, ctx):
+def test_connect_key_only_auto_provisions_agent(client, ctx):
+    """The whole point of 0.1.1: one API key is all the owner provides."""
     status = _connect(client)
     assert status["connected"] is True
     # keys live in the VAULT, nowhere else
     assert ctx.vault.data[VAULT_API_KEY] == "sk_test_not_real"
-    assert ctx.vault.data[VAULT_AGENT_ID] == "agent_123"
     assert len(ctx.vault.data[VAULT_BRIDGE_SECRET]) >= 32
     assert status["bridge_secret"] == ctx.vault.data[VAULT_BRIDGE_SECRET]
     assert status["bridge_path"] == "/api/p/plugin-talk/v1/chat/completions"
 
+    # an agent was created and wired to this Luna's bridge with the secret
+    assert ctx.vault.data[VAULT_AGENT_ID].startswith("agent_auto_")
+    cfg = FakeEL.agent_configs[-1]
+    assert cfg["op"] == "create"
+    assert cfg["url"].endswith("/api/p/plugin-talk/v1")
+    assert cfg["secret"] == ctx.vault.data[VAULT_BRIDGE_SECRET]
+
+
+def test_reconnect_reuses_and_repoints_existing_agent(client, ctx):
+    FakeEL.existing_agents["Luna (plugin-talk)"] = "agent_existing"
+    _connect(client)
+    assert ctx.vault.data[VAULT_AGENT_ID] == "agent_existing"
+    assert FakeEL.agent_configs[-1]["op"] == "update"
+
+
+def test_connect_accepts_manual_agent_override(client, ctx):
+    _connect(client, agent_id="agent_manual")
+    assert ctx.vault.data[VAULT_AGENT_ID] == "agent_manual"
+    assert FakeEL.agent_configs[-1] == {
+        "op": "update",
+        "agent_id": "agent_manual",
+        "url": FakeEL.agent_configs[-1]["url"],
+        "secret": ctx.vault.data[VAULT_BRIDGE_SECRET],
+    }
+
 
 def test_connect_rejects_bad_key(client, ctx):
     FakeEL.fail_key_check = True
-    resp = client.post(
-        "/api/p/plugin-talk/connect", json={"api_key": "sk_bad", "agent_id": "a"}
-    )
+    resp = client.post("/api/p/plugin-talk/connect", json={"api_key": "sk_bad"})
     assert resp.status_code == 400
     assert VAULT_API_KEY not in ctx.vault.data  # nothing stored on failure
 
@@ -153,16 +205,17 @@ def test_voices_endpoint_lists_account_voices(client):
     assert {v["voice_id"] for v in voices} == {"v-rachel", "v-luna"}
 
 
-def test_selected_voice_reaches_the_session_the_widget_consumes(client):
+def test_selected_voice_reaches_the_session_the_widget_consumes(client, ctx):
     _connect(client)
     client.post("/api/p/plugin-talk/settings", json={"voice_id": "v-luna"})
-    session = client.post("/api/p/plugin-talk/session").json()
-    assert session["conversation_token"] == "tok-agent_123"
+    # GET: the widget iframe only has cookie (read-only) auth
+    session = client.get("/api/p/plugin-talk/session").json()
+    assert session["conversation_token"] == f"tok-{ctx.vault.data[VAULT_AGENT_ID]}"
     assert session["voice_id"] == "v-luna"
 
 
 def test_session_requires_setup(client):
-    resp = client.post("/api/p/plugin-talk/session")
+    resp = client.get("/api/p/plugin-talk/session")
     assert resp.status_code == 400  # no agent id yet
 
 

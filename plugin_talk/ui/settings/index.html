@@ -17,31 +17,23 @@
   button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
   .status-ok { color: var(--ok); } .status-err { color: var(--err); }
   code { background:#14121f; padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
-  .copyrow { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
-  .copyrow code { flex: 1; }
-  .copyrow button { margin: 0; padding: 4px 10px; }
-  #msg { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+  #msg, #voice-msg { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+  #agent-line { color: var(--dim); font-size: 12px; margin-top: 8px; }
   audio { width: 100%; margin-top: 8px; height: 32px; }
 </style>
 </head>
 <body>
 <h2>Talk to Luna</h2>
-<p class="hint">Voice runs on ElevenLabs; Luna stays the brain. Audio never touches your Luna server.</p>
+<p class="hint">Voice runs on ElevenLabs; Luna stays the brain. Audio never touches your Luna server.
+Just paste your ElevenLabs API key — the Luna voice agent is created and wired up automatically.</p>
 
 <div class="card" id="connect-card">
   <strong id="conn-status" data-testid="talk-conn-status">Checking…</strong>
   <label>ElevenLabs API key</label>
   <input id="api-key" data-testid="talk-api-key" type="password" placeholder="sk_…" autocomplete="off" />
-  <label>Agent ID (ElevenLabs → Agents → your agent)</label>
-  <input id="agent-id" data-testid="talk-agent-id" placeholder="agent_…" autocomplete="off" />
   <button id="connect" data-testid="talk-connect">Connect</button>
   <button id="disconnect" class="ghost">Disconnect</button>
-  <div id="bridge-info" style="display:none">
-    <label>Custom LLM URL — paste into your ElevenLabs agent (Agent → LLM → Custom LLM)</label>
-    <div class="copyrow"><code id="bridge-url"></code><button data-copy="bridge-url">Copy</button></div>
-    <label>Custom LLM header — add as <em>Authorization</em></label>
-    <div class="copyrow"><code id="bridge-auth"></code><button data-copy="bridge-auth">Copy</button></div>
-  </div>
+  <div id="agent-line" data-testid="talk-agent-line" style="display:none"></div>
   <div id="msg"></div>
 </div>
 
@@ -61,8 +53,22 @@
   function $(id) { return document.getElementById(id); }
   function msg(el, text, ok) { el.textContent = text; el.className = ok ? "status-ok" : "status-err"; }
 
+  // ---- auth: Luna's shell hands iframes a bearer token via ?token= (settings
+  // tabs) and/or a {type:'luna-auth', token} postMessage. Cookie auth alone is
+  // read-only, so writes need the token.
+  var token = new URLSearchParams(location.search).get("token") || "";
+  window.addEventListener("message", function (e) {
+    if (e.origin === location.origin && e.data && e.data.type === "luna-auth" && e.data.token) {
+      token = e.data.token;
+    }
+  });
+  try { window.parent.postMessage({ type: "luna-request-auth" }, location.origin); } catch (e) {}
+
   async function call(path, opts) {
-    var resp = await fetch(API + path, Object.assign({ credentials: "include" }, opts || {}));
+    opts = Object.assign({ credentials: "include" }, opts || {});
+    opts.headers = Object.assign({}, opts.headers || {});
+    if (token) { opts.headers["Authorization"] = "Bearer " + token; }
+    var resp = await fetch(API + path, opts);
     var body = null;
     try { body = await resp.json(); } catch (e) {}
     if (!resp.ok) { throw new Error((body && body.detail) || ("HTTP " + resp.status)); }
@@ -70,15 +76,14 @@
   }
 
   function renderStatus(s) {
-    $("conn-status").textContent = s.connected ? "Connected to ElevenLabs" : "Not connected";
+    $("conn-status").textContent = s.connected ? "Connected — ready to talk" : "Not connected";
     $("conn-status").className = s.connected ? "status-ok" : "status-err";
-    if (s.agent_id) { $("agent-id").value = s.agent_id; }
-    if (s.connected && s.bridge_secret) {
-      $("bridge-info").style.display = "block";
-      $("bridge-url").textContent = location.origin + s.bridge_path;
-      $("bridge-auth").textContent = "Bearer " + s.bridge_secret;
+    var line = $("agent-line");
+    if (s.connected && s.agent_id) {
+      line.style.display = "block";
+      line.textContent = "ElevenLabs agent: " + s.agent_id + " (auto-managed)";
     } else {
-      $("bridge-info").style.display = "none";
+      line.style.display = "none";
     }
   }
 
@@ -111,15 +116,16 @@
 
   $("connect").addEventListener("click", async function () {
     try {
+      msg($("msg"), "Connecting and provisioning the Luna agent…", true);
       var s = await call("/connect", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ api_key: $("api-key").value.trim(), agent_id: $("agent-id").value.trim() }),
+        body: JSON.stringify({ api_key: $("api-key").value.trim() }),
       });
       $("api-key").value = "";
       renderStatus(s);
       await loadVoices(s.voice_id);
-      msg($("msg"), "Connected. Paste the URL + header into your ElevenLabs agent.", true);
+      msg($("msg"), "Connected — the widget is ready. Pick a voice below if you like.", true);
     } catch (e) { msg($("msg"), e.message, false); }
   });
 
@@ -145,14 +151,6 @@
       });
       msg($("voice-msg"), "Saved — applies to the next call.", true);
     } catch (e) { msg($("voice-msg"), e.message, false); }
-  });
-
-  document.querySelectorAll("[data-copy]").forEach(function (b) {
-    b.addEventListener("click", function () {
-      navigator.clipboard.writeText($(b.dataset.copy).textContent).then(function () {
-        b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1200);
-      });
-    });
   });
 
   refresh();

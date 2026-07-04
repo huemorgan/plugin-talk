@@ -150,7 +150,9 @@
     }
     btn.disabled = true; setMode("connecting"); setStatus("Connecting…");
     try {
-      var resp = await fetch(API + "/session", { method: "POST", credentials: "include" });
+      // GET: widget iframes only have cookie auth, which Luna treats as
+      // read-only — the backend accepts GET for session minting for this reason.
+      var resp = await fetch(API + "/session", { method: "GET", credentials: "include" });
       if (!resp.ok) {
         var detail = "Setup needed — see Settings → Talk";
         try { detail = (await resp.json()).detail || detail; } catch (e) {}

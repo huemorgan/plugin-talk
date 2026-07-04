@@ -30,9 +30,12 @@ _UI_DIR = Path(__file__).parent / "ui"
 _NO_CACHE = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache"}
 
 
+AGENT_NAME = "Luna (plugin-talk)"
+
+
 class _ConnectReq(BaseModel):
     api_key: str
-    agent_id: str
+    agent_id: str | None = None  # optional override; normally auto-provisioned
 
 
 class _SettingsReq(BaseModel):
@@ -119,8 +122,17 @@ def register_routes(app, ctx):
 
     # ---------- owner-facing API ----------
 
+    def _public_base(request: Request) -> str:
+        """The externally reachable base URL of this Luna, for the agent's
+        Custom LLM config. Proxy headers win (tenants sit behind one)."""
+        proto = request.headers.get("x-forwarded-proto")
+        host = request.headers.get("x-forwarded-host") or request.headers.get("host")
+        if host:
+            return f"{proto or request.url.scheme}://{host}"
+        return str(request.base_url).rstrip("/")
+
     @router.post("/connect")
-    async def connect(body: _ConnectReq, user=Depends(get_current_user)):
+    async def connect(body: _ConnectReq, request: Request, user=Depends(get_current_user)):
         probe = ElevenLabsClient(body.api_key.strip())
         try:
             await probe.list_voices()
@@ -130,11 +142,31 @@ def register_routes(app, ctx):
 
         vault = _vault()
         await vault.store_credential(VAULT_API_KEY, body.api_key.strip(), kind="api_key")
-        await vault.store_credential(VAULT_AGENT_ID, body.agent_id.strip(), kind="config")
         if not await _read(VAULT_BRIDGE_SECRET):
             await vault.store_credential(
                 VAULT_BRIDGE_SECRET, secrets.token_urlsafe(32), kind="api_key"
             )
+        secret = await _read(VAULT_BRIDGE_SECRET)
+
+        # ElevenLabs appends /chat/completions — hand it the base ending at /v1.
+        bridge_base = f"{_public_base(request)}/api/p/plugin-talk/v1"
+
+        # One key is all the owner provides: find or create the Luna agent and
+        # keep its custom-LLM config pointed at this Luna's bridge.
+        try:
+            agent_id = (body.agent_id or "").strip() or await probe.find_agent(AGENT_NAME)
+            if agent_id:
+                await probe.update_agent_bridge(
+                    agent_id, custom_llm_url=bridge_base, bridge_secret=secret
+                )
+            else:
+                agent_id = await probe.create_agent(
+                    AGENT_NAME, custom_llm_url=bridge_base, bridge_secret=secret
+                )
+        except ElevenLabsError as exc:
+            await probe.close()
+            raise HTTPException(502, f"Could not provision the ElevenLabs agent: {exc}") from exc
+        await vault.store_credential(VAULT_AGENT_ID, agent_id, kind="config")
 
         old = get_client()
         if old is not None:
@@ -192,6 +224,10 @@ def register_routes(app, ctx):
         )
         return settings
 
+    # GET as well as POST: the sidebar widget iframe has cookie auth only (the
+    # shell doesn't hand widgets a bearer token), and cookie auth is read-only.
+    # Minting a session token writes nothing in Luna, so GET is honest.
+    @router.get("/session")
     @router.post("/session")
     async def session(user=Depends(get_current_user)):
         agent_id = await _read(VAULT_AGENT_ID)
