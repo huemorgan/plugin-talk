@@ -324,3 +324,13 @@ def test_saving_voice_applies_it_to_the_agent(client, ctx):
     _connect(client)
     client.post("/api/p/plugin-talk/settings", json={"voice_id": "v-luna"})
     assert FakeEL.voice_sets and FakeEL.voice_sets[-1][1] == "v-luna"
+
+
+def test_widget_layout_matches_owner_spec(client):
+    """No legend, no Talk button; CTA over the waves; ghost End button."""
+    html = client.get("/api/p/plugin-talk/ui/widgets/talk/").text
+    assert 'data-testid="talk-cta"' in html and "Start talking" in html
+    assert 'data-testid="talk-button"' in html and ">End<" in html
+    assert "Click Talk to start" not in html
+    assert "legend" not in html.lower()
+    assert "overflow: hidden" in html  # nothing scrolls in the 180px slot

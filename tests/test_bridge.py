@@ -123,3 +123,19 @@ def test_completion_json_shape():
     assert body["object"] == "chat.completion"
     assert body["choices"][0]["message"]["content"] == "hello"
     assert body["choices"][0]["finish_reason"] == "stop"
+
+
+def test_stream_turn_keepalive_during_slow_tool_turns():
+    """Dead air on long tool calls invites barge-in that cancels the reply —
+    the stream must keep speaking while the agent works."""
+    import asyncio as aio
+
+    async def slow_run():
+        await aio.sleep(0.12)
+        return "Done at last."
+
+    events = _collect(bridge.stream_turn(slow_run, keepalive_interval=0.03))
+    text = "".join(events)
+    assert any(k.strip() in text for k in bridge.KEEPALIVE_WORDS)
+    assert "Done at last." in text
+    assert events[-1] == bridge.SSE_DONE

@@ -163,32 +163,55 @@ def sse_event(payload: dict[str, Any]) -> str:
 SSE_DONE = "data: [DONE]\n\n"
 
 
+# Spoken while a slow (tool-using) turn is still running, so the line never
+# goes dead — dead air makes the user talk over the pending reply, and the
+# barge-in then cancels it (observed in the first real call, 2026-07-04).
+KEEPALIVE_WORDS = ("Still on it... ", "One sec... ", "Almost there... ", "Working on it... ")
+KEEPALIVE_INTERVAL = 7.0
+
+
 async def stream_turn(
     run: Callable[[], Awaitable[str]],
     *,
     buffer_words: str = BUFFER_WORDS,
+    keepalive_interval: float = KEEPALIVE_INTERVAL,
 ) -> AsyncIterator[str]:
     """Yield SSE events for one voice turn.
 
     ``run`` is the deferred agent call (returns final reply text). The buffer
-    chunk goes out immediately so ElevenLabs starts TTS while Luna works; if
-    the turn fails we still speak a graceful error and close the stream
-    correctly — a hung/500 response would stall the call mid-sentence.
+    chunk goes out immediately so ElevenLabs starts TTS while Luna works, a
+    keepalive phrase covers every further ``keepalive_interval`` seconds of a
+    slow tool-using turn, and if the turn fails we still speak a graceful
+    error and close the stream correctly — a hung/500 response would stall the
+    call mid-sentence.
     """
+    import asyncio
+
     completion_id = f"chatcmpl-{uuid.uuid4().hex}"
     created = int(time.time())
 
+    def content(text: str) -> str:
+        return sse_event(_chunk_payload(completion_id, created, delta={"content": text}))
+
     yield sse_event(_chunk_payload(completion_id, created, delta={"role": "assistant"}))
     if buffer_words:
-        yield sse_event(_chunk_payload(completion_id, created, delta={"content": buffer_words}))
+        yield content(buffer_words)
 
-    try:
-        reply = await run()
-    except Exception:  # noqa: BLE001 — never leak internals into spoken audio
-        reply = "Sorry, something went wrong on my side. Ask me again in a moment."
+    task = asyncio.ensure_future(run())
+    beat = 0
+    while True:
+        try:
+            reply = await asyncio.wait_for(asyncio.shield(task), timeout=keepalive_interval)
+            break
+        except asyncio.TimeoutError:
+            yield content(KEEPALIVE_WORDS[beat % len(KEEPALIVE_WORDS)])
+            beat += 1
+        except Exception:  # noqa: BLE001 — never leak internals into spoken audio
+            reply = "Sorry, something went wrong on my side. Ask me again in a moment."
+            break
 
     for chunk in split_speech_chunks(reply):
-        yield sse_event(_chunk_payload(completion_id, created, delta={"content": chunk}))
+        yield content(chunk)
 
     yield sse_event(_chunk_payload(completion_id, created, delta={}, finish_reason="stop"))
     yield SSE_DONE

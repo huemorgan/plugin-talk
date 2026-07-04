@@ -6,7 +6,6 @@
 <title>Talk to Luna</title>
 <style>
   :root {
-    --bg: transparent;
     --fg: #e8e6f0;
     --dim: #8a87a0;
     --user: #2dd4bf;   /* teal — the owner's voice */
@@ -14,33 +13,41 @@
     --err: #f87171;
   }
   * { box-sizing: border-box; margin: 0; }
-  html, body { height: 100%; background: var(--bg); overflow: hidden; }
-  body {
-    font: 12px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
-    color: var(--fg);
-    display: flex; flex-direction: column; align-items: center;
-    padding: 6px 8px;
+  html, body { height: 100%; background: transparent; overflow: hidden; }
+  body { font: 12px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--fg); position: relative; }
+
+  /* full-bleed canvas — waves own the whole widget, nothing can overflow */
+  #viz { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+
+  /* idle call-to-action, floating over the silent waves */
+  #cta {
+    position: absolute; left: 0; right: 0; top: 26%;
+    text-align: center; color: var(--fg); opacity: .85;
+    font-size: 13px; letter-spacing: .06em; cursor: pointer; user-select: none;
   }
-  #viz { width: 100%; flex: 1 1 auto; min-height: 70px; cursor: pointer; }
-  #row { display: flex; align-items: center; gap: 8px; width: 100%; padding-top: 4px; }
+
+  /* live row: status + End, overlaid under the waves */
+  #row {
+    position: absolute; left: 10px; right: 10px; bottom: 8px;
+    display: none; align-items: center; gap: 8px;
+  }
+  #row.live { display: flex; }
   #status { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #status.error { color: var(--err); }
-  button {
-    border: 1px solid var(--dim); border-radius: 999px; background: transparent;
-    color: var(--fg); padding: 3px 12px; font-size: 12px; cursor: pointer;
+  #end {
+    border: 1px solid rgba(255,255,255,.7); border-radius: 999px;
+    background: transparent; color: #fff; padding: 2px 14px;
+    font-size: 12px; cursor: pointer;
   }
-  button.live { border-color: var(--user); color: var(--user); }
-  #legend { display: flex; gap: 8px; color: var(--dim); font-size: 10px; }
-  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
-  .dot.you { background: var(--user); } .dot.luna { background: var(--luna); }
+  #end:hover { border-color: #fff; }
 </style>
 </head>
 <body>
-<canvas id="viz" data-testid="talk-viz" title="Click to talk"></canvas>
+<canvas id="viz" data-testid="talk-viz" title="Talk to Luna"></canvas>
+<div id="cta" data-testid="talk-cta">Start talking</div>
 <div id="row">
-  <span id="status" data-testid="talk-status">Loading…</span>
-  <span id="legend"><span><span class="dot you"></span>You</span><span><span class="dot luna"></span>Luna</span></span>
-  <button id="btn" data-testid="talk-button" disabled>Talk</button>
+  <span id="status" data-testid="talk-status"></span>
+  <button id="end" data-testid="talk-button">End</button>
 </div>
 <script src="elevenlabs-client.js"></script>
 <script>
@@ -49,8 +56,10 @@
   var API = "/api/p/plugin-talk";
   var canvas = document.getElementById("viz");
   var g = canvas.getContext("2d");
-  var btn = document.getElementById("btn");
+  var cta = document.getElementById("cta");
+  var row = document.getElementById("row");
   var statusEl = document.getElementById("status");
+  var endBtn = document.getElementById("end");
 
   var convo = null;          // live Conversation session
   var mode = "idle";         // idle | connecting | listening | thinking | speaking | error
@@ -62,6 +71,11 @@
   }
 
   function setMode(m) { mode = m; }
+
+  function setLive(live) {
+    row.classList.toggle("live", live);
+    cta.style.display = live ? "none" : "block";
+  }
 
   // ------------------------------------------------------------------ audio →
   // The user's side vibrates from OUR OWN AnalyserNode on the mic stream (we
@@ -134,27 +148,29 @@
     g.globalAlpha = 1;
   }
 
+  // waves sit higher now — the freed lower band hosts the status + End row
+  var USER_Y = 0.42, LUNA_Y = 0.62;
+
   function draw(t) {
     var r = canvas.getBoundingClientRect();
     g.clearRect(0, 0, r.width, r.height);
     var h = r.height;
 
     if (mode === "idle" || mode === "error") {
-      // flat, faint lines
-      wave(new Array(HIST).fill(0.02), "rgba(45,212,191,.35)", h * 0.38, 3, t, 0);
-      wave(new Array(HIST).fill(0.02), "rgba(167,139,250,.35)", h * 0.62, 3, t, 2);
+      wave(new Array(HIST).fill(0.02), "rgba(45,212,191,.35)", h * USER_Y, 3, t, 0);
+      wave(new Array(HIST).fill(0.02), "rgba(167,139,250,.35)", h * LUNA_Y, 3, t, 2);
     } else if (mode === "thinking") {
       // calm violet pulse — Luna is working (slow tool calls look alive, not broken)
       var pulse = 6 + Math.sin(t * 0.003) * 4;
-      wave(userHist, "#2dd4bf", h * 0.38, 26, t, 0);
-      wave(new Array(HIST).fill(0.25), "#a78bfa", h * 0.62, pulse, t, 2);
+      wave(userHist, "#2dd4bf", h * USER_Y, 26, t, 0);
+      wave(new Array(HIST).fill(0.25), "#a78bfa", h * LUNA_Y, pulse, t, 2);
     } else {
-      wave(userHist, "#2dd4bf", h * 0.38, 26, t, 0);   // you
-      wave(lunaHist, "#a78bfa", h * 0.62, 30, t, 2);   // luna
+      wave(userHist, "#2dd4bf", h * USER_Y, 26, t, 0);   // you
+      wave(lunaHist, "#a78bfa", h * LUNA_Y, 30, t, 2);   // luna
     }
     pushVolumes();
 
-    // infer "thinking": session live, Luna silent, user finished speaking >600ms ago
+    // infer "thinking": session live, Luna silent, user finished speaking recently
     if (convo && mode !== "idle" && mode !== "error") {
       var lunaLoud = lunaHist[HIST - 1] > 0.04;
       var userLoud = userHist[HIST - 1] > 0.04;
@@ -187,7 +203,7 @@
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
       if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
-        throw new Error("Microphone blocked — click the 🎤/lock icon in the address bar, allow the mic, then press Talk again");
+        throw new Error("Microphone blocked — click the 🎤/lock icon in the address bar, allow the mic, then try again");
       }
       throw new Error("Microphone unavailable: " + (err.name || err));
     }
@@ -204,10 +220,11 @@
 
   // ---------------------------------------------------------------- session →
   async function start() {
+    if (convo) { return; }
     if (!window.ElevenLabsClient || !ElevenLabsClient.Conversation) {
-      setStatus("Voice engine failed to load", true); setMode("error"); return;
+      setLive(true); setMode("error"); setStatus("Voice engine failed to load", true); return;
     }
-    btn.disabled = true; setMode("connecting"); setStatus("Requesting microphone…");
+    setLive(true); setMode("connecting"); setStatus("Requesting microphone…");
     try {
       await ensureMic();
       setStatus("Connecting…");
@@ -246,29 +263,25 @@
       }
       convo = await ElevenLabsClient.Conversation.startSession(opts);
       setMode("listening"); setStatus("Listening…");
-      btn.textContent = "End"; btn.classList.add("live");
     } catch (err) {
       setMode("error"); setStatus(String(err.message || err), true);
-    } finally {
-      btn.disabled = false;
+      releaseMic();
     }
   }
 
   async function stop(passive) {
     var c = convo; convo = null;
     releaseMic();
-    btn.textContent = "Talk"; btn.classList.remove("live"); btn.disabled = false;
-    setMode("idle"); setStatus("Click Talk to start");
+    setMode("idle"); setLive(false); setStatus("");
     if (c && !passive) { try { await c.endSession(); } catch (e) {} }
   }
 
-  btn.addEventListener("click", function () { convo ? stop() : start(); });
+  endBtn.addEventListener("click", function () { stop(); });
+  cta.addEventListener("click", start);
   canvas.addEventListener("click", function () { if (!convo) start(); });
 
   sizeCanvas();
   requestAnimationFrame(draw);
-  btn.disabled = false;
-  setStatus("Click Talk to start");
 })();
 </script>
 </body>
