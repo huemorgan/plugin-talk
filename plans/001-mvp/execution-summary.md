@@ -1,6 +1,20 @@
 # 001 — plugin-talk MVP — Execution Summary
 
-**Version shipped:** plugin-talk 0.1.3 · **Repo:** https://github.com/huemorgan/plugin-talk (tags `v0.1.0`–`v0.1.3`)
+**Version shipped:** plugin-talk 0.1.4 · **Repo:** https://github.com/huemorgan/plugin-talk (tags `v0.1.0`–`v0.1.4`)
+
+> **0.1.4 amendments (first full voice conversation):** ElevenLabs **strips a
+> plain Authorization entry from `custom_llm.request_headers`** — every live
+> call hit the bridge as 401 ("custom_llm generation failed" in their call log)
+> while curl with the same header worked. The fix: store the bridge token as an
+> ElevenLabs **workspace secret** (`POST /v1/convai/secrets`) and reference it
+> as `custom_llm.api_key: {secret_id}` — ElevenLabs then sends the Bearer
+> itself. Verified with their **conversation simulator**
+> (`POST /v1/convai/agents/{id}/simulate-conversation` — exercises the real
+> EL→bridge path headlessly): the genuine agent replied through the bridge
+> ("I'm actually Athena, not Luna"), 200s in Luna's access log. Debug loop that
+> found it: EL conversations API (`termination_reason`) + Luna access log
+> (source IP distinguishes EL's calls from local curls). Also: neutral first
+> message (the brain's name isn't "Luna") and varied buffer words.
 
 > **0.1.3 amendments (first real voice session):** (1) ElevenLabs' cloud can't
 > reach a localhost custom-LLM URL — local Lunas need a tunnel (`cloudflared
