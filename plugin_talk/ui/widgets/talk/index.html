@@ -64,18 +64,47 @@
   function setMode(m) { mode = m; }
 
   // ------------------------------------------------------------------ audio →
-  // Volumes come from the SDK (0..1-ish). Keep a short history per side so the
-  // waveform "vibrates" with real speech energy rather than jumping.
+  // The user's side vibrates from OUR OWN AnalyserNode on the mic stream (we
+  // hold the permission anyway), so it reacts to speech no matter what the SDK
+  // exposes. Luna's side uses the SDK's output volume, with a speaking-mode
+  // pulse as fallback.
   var HIST = 48;
   var userHist = new Array(HIST).fill(0);
   var lunaHist = new Array(HIST).fill(0);
+  var micStream = null, analyser = null, analyserBuf = null, audioCtx = null;
+
+  function attachAnalyser(stream) {
+    try {
+      audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+      var src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 256;
+      analyserBuf = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+    } catch (e) { analyser = null; }
+  }
+
+  function micLevel() {
+    if (!analyser) { return 0; }
+    analyser.getByteTimeDomainData(analyserBuf);
+    var sum = 0;
+    for (var i = 0; i < analyserBuf.length; i++) {
+      var d = (analyserBuf[i] - 128) / 128;
+      sum += d * d;
+    }
+    return Math.min(1, Math.sqrt(sum / analyserBuf.length) * 4);
+  }
+
+  function num(v) { return typeof v === "number" && isFinite(v) ? v : 0; }
 
   function pushVolumes() {
-    var u = 0, l = 0;
+    var u = micLevel(), l = 0;
     if (convo) {
-      try { u = convo.getInputVolume ? convo.getInputVolume() : 0; } catch (e) {}
-      try { l = convo.getOutputVolume ? convo.getOutputVolume() : 0; } catch (e) {}
+      if (!u) { try { u = num(convo.getInputVolume && convo.getInputVolume()); } catch (e) {} }
+      try { l = num(convo.getOutputVolume && convo.getOutputVolume()); } catch (e) {}
     }
+    // fallback: SDK says Luna is speaking but exposes no level → synth a pulse
+    if (!l && mode === "speaking") { l = 0.25 + 0.2 * Math.abs(Math.sin(Date.now() * 0.006)); }
     if (u > 0.04) { lastUserSpokeAt = Date.now(); }
     userHist.push(Math.min(1, u)); userHist.shift();
     lunaHist.push(Math.min(1, l)); lunaHist.shift();
@@ -143,13 +172,45 @@
     else if (mode === "listening") setStatus("Listening…");
   }
 
+  // ------------------------------------------------------------- microphone →
+  // Explicit permission step so a previous "Block" is surfaced and re-askable:
+  // getUserMedia re-prompts when the state is "prompt", and when it's "denied"
+  // we say exactly how to unblock instead of failing silently.
+  async function ensureMic() {
+    if (micStream && micStream.getTracks().some(function (t) { return t.readyState === "live"; })) {
+      return micStream;
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error("This browser can't capture microphone audio");
+    }
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      if (err && (err.name === "NotAllowedError" || err.name === "SecurityError")) {
+        throw new Error("Microphone blocked — click the 🎤/lock icon in the address bar, allow the mic, then press Talk again");
+      }
+      throw new Error("Microphone unavailable: " + (err.name || err));
+    }
+    attachAnalyser(micStream);
+    return micStream;
+  }
+
+  function releaseMic() {
+    if (micStream) {
+      micStream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} });
+      micStream = null; analyser = null;
+    }
+  }
+
   // ---------------------------------------------------------------- session →
   async function start() {
     if (!window.ElevenLabsClient || !ElevenLabsClient.Conversation) {
       setStatus("Voice engine failed to load", true); setMode("error"); return;
     }
-    btn.disabled = true; setMode("connecting"); setStatus("Connecting…");
+    btn.disabled = true; setMode("connecting"); setStatus("Requesting microphone…");
     try {
+      await ensureMic();
+      setStatus("Connecting…");
       // GET: widget iframes only have cookie auth, which Luna treats as
       // read-only — the backend accepts GET for session minting for this reason.
       var resp = await fetch(API + "/session", { method: "GET", credentials: "include" });
@@ -174,9 +235,8 @@
         },
         onError: function () { setStatus("Voice session error", true); setMode("error"); },
       };
-      if (s.voice_id) {
-        opts.overrides = { tts: { voiceId: s.voice_id } };
-      }
+      // voice is applied to the agent itself when saved in Settings — no
+      // per-session overrides (they'd need an explicit permission on the agent)
       if (s.conversation_token) {
         opts.conversationToken = s.conversation_token;
         opts.connectionType = "webrtc";
@@ -196,6 +256,7 @@
 
   async function stop(passive) {
     var c = convo; convo = null;
+    releaseMic();
     btn.textContent = "Talk"; btn.classList.remove("live"); btn.disabled = false;
     setMode("idle"); setStatus("Click Talk to start");
     if (c && !passive) { try { await c.endSession(); } catch (e) {} }

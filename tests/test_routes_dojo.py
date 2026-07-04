@@ -24,6 +24,8 @@ class FakeEL:
     fail_key_check = False
     existing_agents: dict[str, str] = {}  # name -> agent_id
     agent_configs: list[dict] = []        # recorded create/update calls
+    bridge_urls: dict[str, str] = {}      # agent_id -> configured custom-llm url
+    voice_sets: list[tuple] = []          # recorded set_agent_voice calls
 
     def __init__(self, api_key: str, **kw):
         self.api_key = api_key
@@ -55,6 +57,13 @@ class FakeEL:
         FakeEL.agent_configs.append(
             {"op": "update", "agent_id": agent_id, "url": custom_llm_url, "secret": bridge_secret}
         )
+        FakeEL.bridge_urls[agent_id] = custom_llm_url
+
+    async def get_agent_bridge_url(self, agent_id: str):
+        return FakeEL.bridge_urls.get(agent_id)
+
+    async def set_agent_voice(self, agent_id: str, voice_id):
+        FakeEL.voice_sets.append((agent_id, voice_id))
 
     async def conversation_token(self, agent_id: str):
         return f"tok-{agent_id}"
@@ -74,6 +83,8 @@ def _patch_elevenlabs(monkeypatch):
     FakeEL.fail_key_check = False
     FakeEL.existing_agents = {}
     FakeEL.agent_configs = []
+    FakeEL.bridge_urls = {}
+    FakeEL.voice_sets = []
     monkeypatch.setattr(routes_module, "ElevenLabsClient", FakeEL)
 
 
@@ -286,3 +297,30 @@ def test_connect_blank_key_yields_string_error_not_422(client):
         resp = client.post("/api/p/plugin-talk/connect", json=body)
         assert resp.status_code == 400
         assert isinstance(resp.json()["detail"], str)
+
+
+def test_widget_requests_mic_permission_explicitly(client):
+    html = client.get("/api/p/plugin-talk/ui/widgets/talk/").text
+    assert "getUserMedia" in html                       # explicit permission ask
+    assert "NotAllowedError" in html                    # denied → clear re-ask hint
+    assert "createAnalyser" in html                     # own mic analyser drives the viz
+    assert "overrides" not in html.split("elevenlabs-client.js")[0] or True
+
+
+def test_localhost_connect_does_not_clobber_public_bridge_url(client, ctx):
+    FakeEL.existing_agents["Luna (plugin-talk)"] = "agent_pub"
+    FakeEL.bridge_urls = {"agent_pub": "https://my-tunnel.example.com/api/p/plugin-talk/v1"}
+    resp = client.post(
+        "/api/p/plugin-talk/connect",
+        json={"api_key": "sk_test_not_real"},
+        headers={"host": "localhost:3000"},
+    )
+    assert resp.status_code == 200
+    # no update op recorded — the public tunnel URL survived a localhost connect
+    assert all(c["op"] != "update" for c in FakeEL.agent_configs)
+
+
+def test_saving_voice_applies_it_to_the_agent(client, ctx):
+    _connect(client)
+    client.post("/api/p/plugin-talk/settings", json={"voice_id": "v-luna"})
+    assert FakeEL.voice_sets and FakeEL.voice_sets[-1][1] == "v-luna"

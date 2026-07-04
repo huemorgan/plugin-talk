@@ -139,6 +139,10 @@ def register_routes(app, ctx):
             return f"{proto or request.url.scheme}://{host}"
         return str(request.base_url).rstrip("/")
 
+    def _is_local_host(base: str) -> bool:
+        host = base.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+        return host in ("localhost", "127.0.0.1", "0.0.0.0", "::1") or host.endswith(".local")
+
     @router.post("/connect")
     async def connect(body: _ConnectReq, request: Request, user=Depends(get_current_user)):
         if not (body.api_key or "").strip():
@@ -159,16 +163,26 @@ def register_routes(app, ctx):
         secret = await _read(VAULT_BRIDGE_SECRET)
 
         # ElevenLabs appends /chat/completions — hand it the base ending at /v1.
-        bridge_base = f"{_public_base(request)}/api/p/plugin-talk/v1"
+        public_base = _public_base(request)
+        bridge_base = f"{public_base}/api/p/plugin-talk/v1"
 
         # One key is all the owner provides: find or create the Luna agent and
         # keep its custom-LLM config pointed at this Luna's bridge.
+        # ElevenLabs' servers can never reach a localhost URL, so a local base
+        # must NOT clobber an already-working public one (e.g. a tunnel).
         try:
             agent_id = (body.agent_id or "").strip() or await probe.find_agent(AGENT_NAME)
             if agent_id:
-                await probe.update_agent_bridge(
-                    agent_id, custom_llm_url=bridge_base, bridge_secret=secret
+                current = await probe.get_agent_bridge_url(agent_id)
+                keep_current = (
+                    _is_local_host(public_base)
+                    and current
+                    and not _is_local_host(current)
                 )
+                if not keep_current:
+                    await probe.update_agent_bridge(
+                        agent_id, custom_llm_url=bridge_base, bridge_secret=secret
+                    )
             else:
                 agent_id = await probe.create_agent(
                     AGENT_NAME, custom_llm_url=bridge_base, bridge_secret=secret
@@ -232,6 +246,14 @@ def register_routes(app, ctx):
         await _vault().store_credential(
             VAULT_SETTINGS, json.dumps(settings), kind="config"
         )
+        # Apply to the agent itself — per-session overrides need an explicit
+        # permission on the agent, so the default voice is the reliable path.
+        agent_id = await _read(VAULT_AGENT_ID)
+        if agent_id and settings["voice_id"]:
+            try:
+                await (await _client()).set_agent_voice(agent_id, settings["voice_id"])
+            except (ElevenLabsError, HTTPException) as exc:
+                log.warning("plugin-talk: voice not applied to agent: %s", exc)
         return settings
 
     # GET as well as POST: the sidebar widget iframe has cookie auth only (the

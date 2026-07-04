@@ -123,3 +123,22 @@ class ElevenLabsClient:
             f"/v1/convai/agents/{agent_id}",
             json={"conversation_config": self._agent_config(custom_llm_url, bridge_secret)},
         )
+
+    async def get_agent_bridge_url(self, agent_id: str) -> str | None:
+        """The custom-LLM url currently configured on the agent (None if unset)."""
+        try:
+            data = await self._get(f"/v1/convai/agents/{agent_id}")
+        except ElevenLabsError:
+            return None
+        prompt = ((data.get("conversation_config") or {}).get("agent") or {}).get("prompt") or {}
+        return (prompt.get("custom_llm") or {}).get("url")
+
+    async def set_agent_voice(self, agent_id: str, voice_id: str | None) -> None:
+        """Set the agent's TTS voice (agent default — no per-session override needed)."""
+        if not voice_id:
+            return
+        await self._req(
+            "PATCH",
+            f"/v1/convai/agents/{agent_id}",
+            json={"conversation_config": {"tts": {"voice_id": voice_id}}},
+        )
