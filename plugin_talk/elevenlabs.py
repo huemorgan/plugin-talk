@@ -108,6 +108,25 @@ class ElevenLabsClient:
         # the url, so we hand it the bridge base ending at .../v1 (verified
         # live against the API, 2026-07).
         return {
+            # A brain with tools takes 10-30s on some turns. ElevenLabs' own
+            # soft-timeout fillers keep the line alive (TTS-native, better than
+            # bridge-side keepalives alone), and patient turn-taking stops
+            # background chatter from barging in and cancelling pending replies
+            # (observed killing every tool answer in the first real calls).
+            "turn": {
+                "turn_eagerness": "patient",
+                "soft_timeout_config": {
+                    "timeout_seconds": 5.0,
+                    "message": "One moment, I'm checking that...",
+                    "additional_soft_timeout_messages": [
+                        "Still working on it...",
+                        "Almost there, hang on...",
+                    ],
+                    "randomize_fillers": True,
+                    "max_soft_timeouts_per_generation": 3,
+                    "use_llm_generated_message": False,
+                },
+            },
             "agent": {
                 # Neutral: the agent's real name/personality lives in the
                 # connected brain, which may not be called "Luna" at all.
