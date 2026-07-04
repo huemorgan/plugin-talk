@@ -26,7 +26,7 @@ class TalkPlugin(LunaPlugin):
         name="plugin-talk",
         shown_name="Talk",
         icon="mic",
-        version="0.1.6",
+        version="0.1.7",
         description=(
             "Talk to Luna by voice in the browser — sidebar voice widget, "
             "ElevenLabs handles audio, Luna stays the brain."
@@ -46,7 +46,7 @@ class TalkPlugin(LunaPlugin):
         # WidgetSlot isn't re-exported from luna_sdk yet (only SettingsTab is);
         # PluginManifest.widgets is pydantic-validated, so a plain dict works.
         widgets=[
-            {"id": "talk", "slot": "sidebar.bottom", "label": "Talk to Luna", "height": 180},
+            {"id": "talk", "slot": "sidebar.bottom", "label": "Talk to Luna", "height": 90},
         ],
     )
 

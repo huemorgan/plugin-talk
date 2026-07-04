@@ -19,25 +19,25 @@
   /* full-bleed canvas — waves own the whole widget, nothing can overflow */
   #viz { position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
 
-  /* idle call-to-action, floating over the silent waves */
+  /* idle call-to-action, sitting BETWEEN the two waves */
   #cta {
-    position: absolute; left: 0; right: 0; top: 26%;
+    position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
     text-align: center; color: var(--fg); opacity: .85;
-    font-size: 13px; letter-spacing: .06em; cursor: pointer; user-select: none;
+    font-size: 12px; letter-spacing: .06em; cursor: pointer; user-select: none;
   }
 
-  /* live row: status + End, overlaid under the waves */
+  /* live row: status + End, overlaying the waves */
   #row {
-    position: absolute; left: 10px; right: 10px; bottom: 8px;
-    display: none; align-items: center; gap: 8px;
+    position: absolute; left: 8px; right: 8px; bottom: 4px;
+    display: none; align-items: center; gap: 8px; pointer-events: none;
   }
   #row.live { display: flex; }
-  #status { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status { flex: 1; color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #status.error { color: var(--err); }
   #end {
     border: 1px solid rgba(255,255,255,.7); border-radius: 999px;
-    background: transparent; color: #fff; padding: 2px 14px;
-    font-size: 12px; cursor: pointer;
+    background: transparent; color: #fff; padding: 1px 12px;
+    font-size: 11px; cursor: pointer; pointer-events: auto;
   }
   #end:hover { border-color: #fff; }
 </style>
@@ -148,8 +148,8 @@
     g.globalAlpha = 1;
   }
 
-  // waves sit higher now — the freed lower band hosts the status + End row
-  var USER_Y = 0.42, LUNA_Y = 0.62;
+  // compact 90px widget: waves near the top, CTA between them, row overlays
+  var USER_Y = 0.30, LUNA_Y = 0.70;
 
   function draw(t) {
     var r = canvas.getBoundingClientRect();
