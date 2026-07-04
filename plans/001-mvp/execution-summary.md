@@ -59,6 +59,13 @@
   Render CLI credentials (`~/.render/cli.yaml`).
 - Local dev: system python3 is 3.9; plugin venvs need `python3.12`
   (`~/.local/bin/python3.12`).
+- **Submodule push trap:** the `luna-marketplaces` checkout is a submodule in
+  detached HEAD. `git push <url> main:main` from there pushes the *stale local
+  branch* — a silent no-op that exits 0 — so the seed commit never reached GitHub
+  and the first deploy built the old tree. From a detached-HEAD submodule, always
+  push `HEAD:main` (and verify with `git ls-remote` / `gh api .../commits/main`).
+  Render (`luna-marketplaces` service, auto-deploy OFF) then needs a manual deploy;
+  the authenticated CLI creds in `~/.render/cli.yaml` can trigger it headlessly.
 
 ## Things to consider in the future
 
