@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Talk — Settings</title>
+<style>
+  :root { --fg:#e8e6f0; --dim:#8a87a0; --card:#1d1b2a; --line:#2e2b40; --accent:#a78bfa; --ok:#2dd4bf; --err:#f87171; }
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 14px/1.5 -apple-system,"Segoe UI",Roboto,sans-serif; color: var(--fg); background: transparent; padding: 16px; max-width: 640px; }
+  h2 { font-size: 15px; margin-bottom: 4px; }
+  p.hint { color: var(--dim); font-size: 12.5px; margin-bottom: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; margin-bottom: 14px; }
+  label { display:block; color: var(--dim); font-size: 12px; margin: 8px 0 3px; }
+  input, select { width: 100%; padding: 7px 9px; border-radius: 7px; border: 1px solid var(--line); background: #14121f; color: var(--fg); font-size: 13px; }
+  button { margin-top: 10px; border: 0; border-radius: 7px; background: var(--accent); color: #14121f; font-weight: 600; padding: 7px 14px; cursor: pointer; font-size: 13px; }
+  button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+  .status-ok { color: var(--ok); } .status-err { color: var(--err); }
+  code { background:#14121f; padding: 2px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
+  .copyrow { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+  .copyrow code { flex: 1; }
+  .copyrow button { margin: 0; padding: 4px 10px; }
+  #msg { font-size: 12.5px; margin-top: 8px; min-height: 16px; }
+  audio { width: 100%; margin-top: 8px; height: 32px; }
+</style>
+</head>
+<body>
+<h2>Talk to Luna</h2>
+<p class="hint">Voice runs on ElevenLabs; Luna stays the brain. Audio never touches your Luna server.</p>
+
+<div class="card" id="connect-card">
+  <strong id="conn-status" data-testid="talk-conn-status">Checking…</strong>
+  <label>ElevenLabs API key</label>
+  <input id="api-key" data-testid="talk-api-key" type="password" placeholder="sk_…" autocomplete="off" />
+  <label>Agent ID (ElevenLabs → Agents → your agent)</label>
+  <input id="agent-id" data-testid="talk-agent-id" placeholder="agent_…" autocomplete="off" />
+  <button id="connect" data-testid="talk-connect">Connect</button>
+  <button id="disconnect" class="ghost">Disconnect</button>
+  <div id="bridge-info" style="display:none">
+    <label>Custom LLM URL — paste into your ElevenLabs agent (Agent → LLM → Custom LLM)</label>
+    <div class="copyrow"><code id="bridge-url"></code><button data-copy="bridge-url">Copy</button></div>
+    <label>Custom LLM header — add as <em>Authorization</em></label>
+    <div class="copyrow"><code id="bridge-auth"></code><button data-copy="bridge-auth">Copy</button></div>
+  </div>
+  <div id="msg"></div>
+</div>
+
+<div class="card">
+  <strong>Luna's voice</strong>
+  <label>Voice</label>
+  <select id="voice" data-testid="talk-voice-select"><option value="">Agent default</option></select>
+  <audio id="preview" controls style="display:none"></audio>
+  <button id="save-voice" data-testid="talk-save-voice">Save voice</button>
+  <div id="voice-msg"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var API = "/api/p/plugin-talk";
+  function $(id) { return document.getElementById(id); }
+  function msg(el, text, ok) { el.textContent = text; el.className = ok ? "status-ok" : "status-err"; }
+
+  async function call(path, opts) {
+    var resp = await fetch(API + path, Object.assign({ credentials: "include" }, opts || {}));
+    var body = null;
+    try { body = await resp.json(); } catch (e) {}
+    if (!resp.ok) { throw new Error((body && body.detail) || ("HTTP " + resp.status)); }
+    return body;
+  }
+
+  function renderStatus(s) {
+    $("conn-status").textContent = s.connected ? "Connected to ElevenLabs" : "Not connected";
+    $("conn-status").className = s.connected ? "status-ok" : "status-err";
+    if (s.agent_id) { $("agent-id").value = s.agent_id; }
+    if (s.connected && s.bridge_secret) {
+      $("bridge-info").style.display = "block";
+      $("bridge-url").textContent = location.origin + s.bridge_path;
+      $("bridge-auth").textContent = "Bearer " + s.bridge_secret;
+    } else {
+      $("bridge-info").style.display = "none";
+    }
+  }
+
+  async function loadVoices(selected) {
+    try {
+      var data = await call("/voices");
+      var sel = $("voice");
+      sel.innerHTML = '<option value="">Agent default</option>';
+      data.voices.forEach(function (v) {
+        var o = document.createElement("option");
+        o.value = v.voice_id;
+        o.textContent = v.name + (v.category ? " (" + v.category + ")" : "");
+        o.dataset.preview = v.preview_url || "";
+        sel.appendChild(o);
+      });
+      if (selected) { sel.value = selected; }
+    } catch (e) { /* not connected yet — picker stays empty */ }
+  }
+
+  async function refresh() {
+    try {
+      var s = await call("/status");
+      renderStatus(s);
+      if (s.connected) { await loadVoices(s.voice_id); }
+    } catch (e) {
+      $("conn-status").textContent = "Status unavailable: " + e.message;
+      $("conn-status").className = "status-err";
+    }
+  }
+
+  $("connect").addEventListener("click", async function () {
+    try {
+      var s = await call("/connect", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ api_key: $("api-key").value.trim(), agent_id: $("agent-id").value.trim() }),
+      });
+      $("api-key").value = "";
+      renderStatus(s);
+      await loadVoices(s.voice_id);
+      msg($("msg"), "Connected. Paste the URL + header into your ElevenLabs agent.", true);
+    } catch (e) { msg($("msg"), e.message, false); }
+  });
+
+  $("disconnect").addEventListener("click", async function () {
+    try { renderStatus(await call("/disconnect", { method: "POST" })); msg($("msg"), "Disconnected.", true); }
+    catch (e) { msg($("msg"), e.message, false); }
+  });
+
+  $("voice").addEventListener("change", function () {
+    var opt = this.selectedOptions[0];
+    var url = opt && opt.dataset.preview;
+    var audio = $("preview");
+    if (url) { audio.src = url; audio.style.display = "block"; audio.play().catch(function(){}); }
+    else { audio.pause(); audio.style.display = "none"; }
+  });
+
+  $("save-voice").addEventListener("click", async function () {
+    try {
+      await call("/settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ voice_id: $("voice").value || null }),
+      });
+      msg($("voice-msg"), "Saved — applies to the next call.", true);
+    } catch (e) { msg($("voice-msg"), e.message, false); }
+  });
+
+  document.querySelectorAll("[data-copy]").forEach(function (b) {
+    b.addEventListener("click", function () {
+      navigator.clipboard.writeText($(b.dataset.copy).textContent).then(function () {
+        b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy"; }, 1200);
+      });
+    });
+  });
+
+  refresh();
+})();
+</script>
+</body>
+</html>

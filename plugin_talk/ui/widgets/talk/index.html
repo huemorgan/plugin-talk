@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Talk to Luna</title>
+<style>
+  :root {
+    --bg: transparent;
+    --fg: #e8e6f0;
+    --dim: #8a87a0;
+    --user: #2dd4bf;   /* teal — the owner's voice */
+    --luna: #a78bfa;   /* violet — Luna's voice */
+    --err: #f87171;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; background: var(--bg); overflow: hidden; }
+  body {
+    font: 12px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    display: flex; flex-direction: column; align-items: center;
+    padding: 6px 8px;
+  }
+  #viz { width: 100%; flex: 1 1 auto; min-height: 70px; cursor: pointer; }
+  #row { display: flex; align-items: center; gap: 8px; width: 100%; padding-top: 4px; }
+  #status { flex: 1; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #status.error { color: var(--err); }
+  button {
+    border: 1px solid var(--dim); border-radius: 999px; background: transparent;
+    color: var(--fg); padding: 3px 12px; font-size: 12px; cursor: pointer;
+  }
+  button.live { border-color: var(--user); color: var(--user); }
+  #legend { display: flex; gap: 8px; color: var(--dim); font-size: 10px; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 3px; vertical-align: middle; }
+  .dot.you { background: var(--user); } .dot.luna { background: var(--luna); }
+</style>
+</head>
+<body>
+<canvas id="viz" data-testid="talk-viz" title="Click to talk"></canvas>
+<div id="row">
+  <span id="status" data-testid="talk-status">Loading…</span>
+  <span id="legend"><span><span class="dot you"></span>You</span><span><span class="dot luna"></span>Luna</span></span>
+  <button id="btn" data-testid="talk-button" disabled>Talk</button>
+</div>
+<script src="elevenlabs-client.js"></script>
+<script>
+(function () {
+  "use strict";
+  var API = "/api/p/plugin-talk";
+  var canvas = document.getElementById("viz");
+  var g = canvas.getContext("2d");
+  var btn = document.getElementById("btn");
+  var statusEl = document.getElementById("status");
+
+  var convo = null;          // live Conversation session
+  var mode = "idle";         // idle | connecting | listening | thinking | speaking | error
+  var lastUserSpokeAt = 0;
+
+  function setStatus(text, isErr) {
+    statusEl.textContent = text;
+    statusEl.classList.toggle("error", !!isErr);
+  }
+
+  function setMode(m) { mode = m; }
+
+  // ------------------------------------------------------------------ audio →
+  // Volumes come from the SDK (0..1-ish). Keep a short history per side so the
+  // waveform "vibrates" with real speech energy rather than jumping.
+  var HIST = 48;
+  var userHist = new Array(HIST).fill(0);
+  var lunaHist = new Array(HIST).fill(0);
+
+  function pushVolumes() {
+    var u = 0, l = 0;
+    if (convo) {
+      try { u = convo.getInputVolume ? convo.getInputVolume() : 0; } catch (e) {}
+      try { l = convo.getOutputVolume ? convo.getOutputVolume() : 0; } catch (e) {}
+    }
+    if (u > 0.04) { lastUserSpokeAt = Date.now(); }
+    userHist.push(Math.min(1, u)); userHist.shift();
+    lunaHist.push(Math.min(1, l)); lunaHist.shift();
+  }
+
+  // ---------------------------------------------------------------- drawing →
+  function sizeCanvas() {
+    var r = canvas.getBoundingClientRect();
+    var dpr = window.devicePixelRatio || 1;
+    canvas.width = r.width * dpr; canvas.height = r.height * dpr;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener("resize", sizeCanvas);
+
+  function wave(hist, color, midY, amp, t, phase) {
+    var w = canvas.getBoundingClientRect().width;
+    g.beginPath();
+    for (var i = 0; i < HIST; i++) {
+      var x = (i / (HIST - 1)) * w;
+      var energy = hist[i];
+      var y = midY +
+        Math.sin(i * 0.55 + t * 0.004 + phase) * (2 + energy * amp) +
+        Math.sin(i * 1.31 + t * 0.007 + phase * 2) * energy * amp * 0.5;
+      i === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+    g.strokeStyle = color; g.lineWidth = 1.6; g.globalAlpha = 0.9; g.stroke();
+    g.globalAlpha = 1;
+  }
+
+  function draw(t) {
+    var r = canvas.getBoundingClientRect();
+    g.clearRect(0, 0, r.width, r.height);
+    var h = r.height;
+
+    if (mode === "idle" || mode === "error") {
+      // flat, faint lines
+      wave(new Array(HIST).fill(0.02), "rgba(45,212,191,.35)", h * 0.38, 3, t, 0);
+      wave(new Array(HIST).fill(0.02), "rgba(167,139,250,.35)", h * 0.62, 3, t, 2);
+    } else if (mode === "thinking") {
+      // calm violet pulse — Luna is working (slow tool calls look alive, not broken)
+      var pulse = 6 + Math.sin(t * 0.003) * 4;
+      wave(userHist, "#2dd4bf", h * 0.38, 26, t, 0);
+      wave(new Array(HIST).fill(0.25), "#a78bfa", h * 0.62, pulse, t, 2);
+    } else {
+      wave(userHist, "#2dd4bf", h * 0.38, 26, t, 0);   // you
+      wave(lunaHist, "#a78bfa", h * 0.62, 30, t, 2);   // luna
+    }
+    pushVolumes();
+
+    // infer "thinking": session live, Luna silent, user finished speaking >600ms ago
+    if (convo && mode !== "idle" && mode !== "error") {
+      var lunaLoud = lunaHist[HIST - 1] > 0.04;
+      var userLoud = userHist[HIST - 1] > 0.04;
+      if (lunaLoud) setMode("speaking");
+      else if (userLoud) setMode("listening");
+      else if (Date.now() - lastUserSpokeAt < 4000 && mode !== "thinking") setMode("thinking");
+      syncStatus();
+    }
+    requestAnimationFrame(draw);
+  }
+
+  function syncStatus() {
+    if (mode === "speaking") setStatus("Luna is speaking — interrupt anytime");
+    else if (mode === "thinking") setStatus("Luna is thinking…");
+    else if (mode === "listening") setStatus("Listening…");
+  }
+
+  // ---------------------------------------------------------------- session →
+  async function start() {
+    if (!window.ElevenLabsClient || !ElevenLabsClient.Conversation) {
+      setStatus("Voice engine failed to load", true); setMode("error"); return;
+    }
+    btn.disabled = true; setMode("connecting"); setStatus("Connecting…");
+    try {
+      var resp = await fetch(API + "/session", { method: "POST", credentials: "include" });
+      if (!resp.ok) {
+        var detail = "Setup needed — see Settings → Talk";
+        try { detail = (await resp.json()).detail || detail; } catch (e) {}
+        throw new Error(detail);
+      }
+      var s = await resp.json();
+      var opts = {
+        onModeChange: function (m) {
+          if (m && m.mode === "speaking") setMode("speaking");
+          else if (m && m.mode === "listening") setMode("listening");
+          syncStatus();
+        },
+        onStatusChange: function (st) {
+          if (st && (st.status === "disconnected" || st.status === "disconnecting")) stop(true);
+        },
+        onError: function () { setStatus("Voice session error", true); setMode("error"); },
+      };
+      if (s.voice_id) {
+        opts.overrides = { tts: { voiceId: s.voice_id } };
+      }
+      if (s.conversation_token) {
+        opts.conversationToken = s.conversation_token;
+        opts.connectionType = "webrtc";
+      } else {
+        opts.signedUrl = s.signed_url;
+        opts.connectionType = "websocket";
+      }
+      convo = await ElevenLabsClient.Conversation.startSession(opts);
+      setMode("listening"); setStatus("Listening…");
+      btn.textContent = "End"; btn.classList.add("live");
+    } catch (err) {
+      setMode("error"); setStatus(String(err.message || err), true);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function stop(passive) {
+    var c = convo; convo = null;
+    btn.textContent = "Talk"; btn.classList.remove("live"); btn.disabled = false;
+    setMode("idle"); setStatus("Click Talk to start");
+    if (c && !passive) { try { await c.endSession(); } catch (e) {} }
+  }
+
+  btn.addEventListener("click", function () { convo ? stop() : start(); });
+  canvas.addEventListener("click", function () { if (!convo) start(); });
+
+  sizeCanvas();
+  requestAnimationFrame(draw);
+  btn.disabled = false;
+  setStatus("Click Talk to start");
+})();
+</script>
+</body>
+</html>

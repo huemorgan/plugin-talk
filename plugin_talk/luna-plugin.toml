@@ -1,0 +1,31 @@
+name = "plugin-talk"
+shown_name = "Talk"
+version = "0.1.0"
+description = "Talk to Luna by voice in the browser — sidebar voice widget, ElevenLabs handles audio, Luna stays the brain."
+entry = "plugin_talk"
+sdk_version = "0"
+license = "MIT"
+tags = ["voice", "talk", "elevenlabs", "interface"]
+readme = """
+# plugin-talk
+
+Talk to Luna by voice, right in the browser. Adds a sidebar widget with a live
+voice visualization (your voice and Luna's), powered by ElevenLabs Agents for
+microphone, speech-to-text, text-to-speech and barge-in — while **Luna's own
+agent loop stays the brain**: the plugin exposes an OpenAI-compatible bridge
+endpoint that ElevenLabs calls, and every reply comes from Luna's `run_turn`
+with her tools and memory.
+
+Setup: connect your ElevenLabs API key + agent id in Settings → Talk, then point
+your ElevenLabs agent's Custom LLM at the bridge URL shown there. Pick Luna's
+voice in the same tab.
+
+Requires: an ElevenLabs account with an Agents... agent; plugin-vault for keys.
+Audio never touches the Luna server — it flows browser ⇄ ElevenLabs.
+
+Source: https://github.com/huemorgan/plugin-talk
+"""
+
+[requires]
+tools = 0
+depends_on = ["plugin-vault"]
